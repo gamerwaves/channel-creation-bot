@@ -62,3 +62,21 @@ def remove_user_channel(user_id, channel_id):
             return True
     
     return False
+def remove_channel_from_all_users(channel_id):
+    """Find original channel maker and delete channel from storage for admin deletes."""
+    data = load_data()
+    modified = False
+    
+    for user_id_str in data:
+        if isinstance(data[user_id_str], dict) and 'channels' in data[user_id_str]:
+            channels = data[user_id_str]['channels']
+            for i, channel in enumerate(channels):
+                if channel['id'] == channel_id:
+                    channels.pop(i)
+                    modified = True
+                    break
+    
+    if modified:
+        save_data(data)
+    
+    return modified

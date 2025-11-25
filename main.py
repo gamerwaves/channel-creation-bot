@@ -5,13 +5,8 @@ from dotenv import load_dotenv
 import category_manager
 import storage
 
-# Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-# TARGET_CATEGORY_ID is now managed by category_manager but we might still read it for initial setup if needed, 
-# or we rely solely on the store. The plan implies the admin sets it. 
-# However, to keep backward compatibility or easy setup, we can check env if store is empty.
-ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
 
 # Bot setup
 class MyClient(discord.Client):
@@ -20,7 +15,6 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Initialize category store from env if empty
         target_cat_env = os.getenv('TARGET_CATEGORY_ID')
         if target_cat_env and not category_manager.get_base_category_id():
             category_manager.set_base_category(target_cat_env)
@@ -38,12 +32,11 @@ async def on_ready():
 @client.tree.command(name="set-category", description="Admin only: Set the base category for new channels")
 @app_commands.describe(category_id="The ID of the base category")
 async def set_category(interaction: discord.Interaction, category_id: str):
-    if str(interaction.user.id) != ADMIN_USER_ID:
+    if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
         return
 
     try:
-        # Verify it exists
         category = interaction.guild.get_channel(int(category_id))
         if not category or not isinstance(category, discord.CategoryChannel):
             await interaction.response.send_message(f"Invalid category ID. Please provide a valid Category ID.", ephemeral=True)
@@ -54,20 +47,7 @@ async def set_category(interaction: discord.Interaction, category_id: str):
     except ValueError:
         await interaction.response.send_message("Invalid ID format.", ephemeral=True)
 
-@client.tree.command(name="delete-channel", description="Admin only: Delete a channel")
-@app_commands.describe(channel="The channel to delete")
-async def delete_channel(interaction: discord.Interaction, channel: discord.TextChannel):
-    if str(interaction.user.id) != ADMIN_USER_ID:
-        await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
-        return
 
-    try:
-        await channel.delete()
-        await interaction.response.send_message(f"Channel **{channel.name}** has been deleted.", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.response.send_message("I do not have permission to delete that channel.", ephemeral=True)
-    except discord.HTTPException as e:
-        await interaction.response.send_message(f"Failed to delete channel: {e}", ephemeral=True)
 
 
 @client.tree.command(name="create-channel", description="Creates a new text channel")
@@ -110,17 +90,19 @@ async def create_channel(interaction: discord.Interaction, channel_name: str):
     except Exception as e:
         await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
 
-@client.tree.command(name="delete-channel", description="Deletes a channel you created")
+@client.tree.command(name="delete-channel", description="Deletes a channel you created (or any channel if admin)")
 @app_commands.describe(channel="The channel to delete")
 async def delete_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     user_id = interaction.user.id
-    user_channels = storage.get_user_channels(user_id)
+    is_admin = interaction.user.guild_permissions.administrator
     
-    # Check if user created this channel
-    channel_ids = [ch['id'] for ch in user_channels]
-    if channel.id not in channel_ids:
-        await interaction.response.send_message("You can only delete channels you created.", ephemeral=True)
-        return
+    # Check if user created this channel (unless admin)
+    if not is_admin:
+        user_channels = storage.get_user_channels(user_id)
+        channel_ids = [ch['id'] for ch in user_channels]
+        if channel.id not in channel_ids:
+            await interaction.response.send_message("You can only delete channels you created.", ephemeral=True)
+            return
     
     try:
         await interaction.response.defer(ephemeral=True)
@@ -128,8 +110,8 @@ async def delete_channel(interaction: discord.Interaction, channel: discord.Text
         # Delete the channel
         await channel.delete()
         
-        # Remove from storage
-        storage.remove_user_channel(user_id, channel.id)
+        # Remove from storage (find who created it and remove)
+        storage.remove_channel_from_all_users(channel.id)
         
         await interaction.followup.send(f"Channel '{channel.name}' deleted successfully!")
         
