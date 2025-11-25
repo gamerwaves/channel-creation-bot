@@ -20,15 +20,12 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-<<<<<<< HEAD
         # Initialize category store from env if empty
         target_cat_env = os.getenv('TARGET_CATEGORY_ID')
         if target_cat_env and not category_manager.get_base_category_id():
             category_manager.set_base_category(target_cat_env)
             print(f"Initialized base category from .env: {target_cat_env}")
             
-=======
->>>>>>> 0196648 (added delete functionality im too lazy to map ppl so yea...)
         await self.tree.sync()
 
 client = MyClient()
