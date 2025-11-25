@@ -16,14 +16,49 @@ def save_data(data):
     with open(STORAGE_FILE, 'w') as f:
         json.dump(data, f, indent=4)
 
-def get_user_channel_count(user_id):
-    data = load_data()
-    return data.get(str(user_id), 0)
-
-def increment_user_channel_count(user_id):
+def get_user_channels(user_id):
+    """Get list of channels created by user"""
     data = load_data()
     user_id_str = str(user_id)
-    current_count = data.get(user_id_str, 0)
-    data[user_id_str] = current_count + 1
+    if user_id_str not in data:
+        return []
+    if isinstance(data[user_id_str], int):
+        return []
+    return data[user_id_str].get('channels', [])
+
+def get_user_channel_count(user_id):
+    """Get count of channels created by user"""
+    return len(get_user_channels(user_id))
+
+def add_user_channel(user_id, channel_id, channel_name):
+    """Add a channel to user's created channels"""
+    data = load_data()
+    user_id_str = str(user_id)
+    
+    if user_id_str not in data or isinstance(data[user_id_str], int):
+        data[user_id_str] = {'channels': []}
+    
+    data[user_id_str]['channels'].append({
+        'id': channel_id,
+        'name': channel_name
+    })
+    
     save_data(data)
-    return data[user_id_str]
+    return len(data[user_id_str]['channels'])
+
+def remove_user_channel(user_id, channel_id):
+    """Remove a channel from user's created channels"""
+    data = load_data()
+    user_id_str = str(user_id)
+    
+    if user_id_str not in data or isinstance(data[user_id_str], int):
+        return False
+    
+    channels = data[user_id_str]['channels']
+    for i, channel in enumerate(channels):
+        if channel['id'] == channel_id:
+            channels.pop(i)
+            save_data(data)
+            return True
+    
+    return False
