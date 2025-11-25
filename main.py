@@ -2,12 +2,16 @@ import discord
 from discord import app_commands
 import os
 from dotenv import load_dotenv
+import category_manager
 import storage
 
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-TARGET_CATEGORY_ID = os.getenv('TARGET_CATEGORY_ID')
+# TARGET_CATEGORY_ID is now managed by category_manager but we might still read it for initial setup if needed, 
+# or we rely solely on the store. The plan implies the admin sets it. 
+# However, to keep backward compatibility or easy setup, we can check env if store is empty.
+ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
 
 # Bot setup
 class MyClient(discord.Client):
@@ -16,8 +20,12 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Sync commands globally for simplicity in this example.
-        # In production, you might want to sync to a specific guild for faster updates during dev.
+        # Initialize category store from env if empty
+        target_cat_env = os.getenv('TARGET_CATEGORY_ID')
+        if target_cat_env and not category_manager.get_base_category_id():
+            category_manager.set_base_category(target_cat_env)
+            print(f"Initialized base category from .env: {target_cat_env}")
+            
         await self.tree.sync()
 
 client = MyClient()
@@ -26,6 +34,26 @@ client = MyClient()
 async def on_ready():
     print(f'Logged in as {client.user} (ID: {client.user.id})')
     print('------')
+
+@client.tree.command(name="set-category", description="Admin only: Set the base category for new channels")
+@app_commands.describe(category_id="The ID of the base category")
+async def set_category(interaction: discord.Interaction, category_id: str):
+    if str(interaction.user.id) != ADMIN_USER_ID:
+        await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
+        return
+
+    try:
+        # Verify it exists
+        category = interaction.guild.get_channel(int(category_id))
+        if not category or not isinstance(category, discord.CategoryChannel):
+            await interaction.response.send_message(f"Invalid category ID. Please provide a valid Category ID.", ephemeral=True)
+            return
+        
+        category_manager.set_base_category(category_id)
+        await interaction.response.send_message(f"Base category set to **{category.name}** (ID: {category_id}).", ephemeral=True)
+    except ValueError:
+        await interaction.response.send_message("Invalid ID format.", ephemeral=True)
+
 
 @client.tree.command(name="create-channel", description="Creates a new text channel")
 @app_commands.describe(channel_name="The name of the channel to create")
@@ -38,20 +66,11 @@ async def create_channel(interaction: discord.Interaction, channel_name: str):
         await interaction.response.send_message("You have reached the limit of 2 created channels.", ephemeral=True)
         return
 
-    # Get the category
-    if not TARGET_CATEGORY_ID:
-        await interaction.response.send_message("Configuration error: TARGET_CATEGORY_ID is not set.", ephemeral=True)
-        return
-
-    try:
-        category = interaction.guild.get_channel(int(TARGET_CATEGORY_ID))
-        if not category or not isinstance(category, discord.CategoryChannel):
-             # Fallback: try to fetch if get returns None (though get is usually sufficient if cache is ready)
-             # For simplicity, we assume cache is populated or we error out.
-             await interaction.response.send_message(f"Configuration error: Category with ID {TARGET_CATEGORY_ID} not found.", ephemeral=True)
-             return
-    except ValueError:
-        await interaction.response.send_message("Configuration error: Invalid TARGET_CATEGORY_ID.", ephemeral=True)
+    # Get the category via manager
+    category = await category_manager.get_target_category(interaction.guild)
+    
+    if not category:
+        await interaction.response.send_message("Configuration error: No valid category found or created. Please contact an admin.", ephemeral=True)
         return
 
     # Create the channel
@@ -67,7 +86,7 @@ async def create_channel(interaction: discord.Interaction, channel_name: str):
         # Increment count
         storage.increment_user_channel_count(user_id)
         
-        await interaction.followup.send(f"Channel {new_channel.mention} created successfully!")
+        await interaction.followup.send(f"Channel {new_channel.mention} created successfully in {category.name}!")
         
     except discord.Forbidden:
         await interaction.followup.send("I do not have permission to create channels in that category.", ephemeral=True)
